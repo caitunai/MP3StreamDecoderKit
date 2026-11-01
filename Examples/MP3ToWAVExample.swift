@@ -9,13 +9,18 @@ import MP3StreamDecoderKit
 /// not own a BLE connection or configure an audio playback session.
 @MainActor
 final class MP3ToWAVExample {
-    private let decoder = MP3StreamDecoder()
+    private let decoder: MP3StreamDecoder
     private let outputURL: URL
     private var outputFile: AVAudioFile?
 
     /// Creates a session whose destination should have a `.wav` extension.
-    init(outputURL: URL) {
+    ///
+    /// - Parameters:
+    ///   - outputURL: The destination WAV URL.
+    ///   - outputCommonFormat: The decoder's Int16 or Float32 sample type.
+    init(outputURL: URL, outputCommonFormat: AVAudioCommonFormat = .pcmFormatFloat32) {
         self.outputURL = outputURL
+        decoder = MP3StreamDecoder(outputCommonFormat: outputCommonFormat)
     }
 
     /// Decodes one BLE payload and writes any PCM output to the destination.
@@ -43,7 +48,7 @@ final class MP3ToWAVExample {
                 ]
                 outputFile = try AVAudioFile(
                     forWriting: outputURL, settings: settings,
-                    commonFormat: .pcmFormatFloat32, interleaved: false
+                    commonFormat: buffer.format.commonFormat, interleaved: false
                 )
             }
             try outputFile?.write(from: buffer)

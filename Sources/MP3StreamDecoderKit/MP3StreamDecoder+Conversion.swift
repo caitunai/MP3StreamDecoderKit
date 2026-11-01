@@ -5,7 +5,7 @@ import Foundation
 extension MP3StreamDecoder {
     internal func configure(for header: MP3FrameHeader) throws {
         guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32, sampleRate: Double(header.sampleRate),
+            commonFormat: outputCommonFormat, sampleRate: Double(header.sampleRate),
             channels: AVAudioChannelCount(header.channelCount), interleaved: false
         ) else {
             throw MP3StreamDecoderError.allocationFailed

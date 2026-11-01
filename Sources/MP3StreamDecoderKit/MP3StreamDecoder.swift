@@ -3,13 +3,15 @@ import AVFAudio
 import Foundation
 import OSLog
 
-/// Incrementally decodes raw MP3 frame bytes into non-interleaved Float32 PCM.
+/// Incrementally decodes raw MP3 frame bytes into non-interleaved PCM.
 ///
 /// Retain one decoder per continuous stream. Access all methods and properties
 /// from the same serial execution context. Input must contain only ordered MP3
 /// frame bytes; remove transport headers before appending. ID3 tags and automatic
 /// recovery from missing or corrupt bytes are outside this decoder's contract.
 public final class MP3StreamDecoder {
+    /// The selected PCM sample type, preserved when the decoder is reset.
+    public let outputCommonFormat: AVAudioCommonFormat
     /// The PCM output format, available after the first complete MP3 frame.
     public internal(set) var outputFormat: AVAudioFormat?
     /// The first compressed frame's header; later bit rates may vary.
@@ -23,7 +25,18 @@ public final class MP3StreamDecoder {
     internal var finished = false
 
     /// Creates an empty decoder without assuming an input sample rate or bit rate.
-    public init() {}
+    ///
+    /// - Parameter outputCommonFormat: The output sample type. Use
+    ///   `.pcmFormatInt16` for `int16ChannelData` or `.pcmFormatFloat32` for
+    ///   `floatChannelData`. The default preserves the original Float32 behavior.
+    /// - Precondition: Only `.pcmFormatInt16` and `.pcmFormatFloat32` are supported.
+    public init(outputCommonFormat: AVAudioCommonFormat = .pcmFormatFloat32) {
+        precondition(
+            outputCommonFormat == .pcmFormatInt16 || outputCommonFormat == .pcmFormatFloat32,
+            "Only pcmFormatInt16 and pcmFormatFloat32 are supported."
+        )
+        self.outputCommonFormat = outputCommonFormat
+    }
 
     deinit {
         if let converter { AudioConverterDispose(converter) }
@@ -100,6 +113,7 @@ public final class MP3StreamDecoder {
     ///
     /// Call this method before a new recording or after a transport discontinuity.
     /// Resuming midstream may still lose audio until MP3 reservoir data recovers.
+    /// The selected `outputCommonFormat` is retained.
     public func reset() {
         if let converter { AudioConverterDispose(converter) }
         converter = nil

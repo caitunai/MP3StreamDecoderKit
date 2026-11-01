@@ -42,6 +42,109 @@ final class MP3StreamDecoderTests: XCTestCase {
         return result
     }
 
+    func collectInt16(_ buffers: [AVAudioPCMBuffer], into channels: inout [[Int16]]) {
+        for buffer in buffers {
+            XCTAssertEqual(buffer.format.commonFormat, .pcmFormatInt16)
+            XCTAssertFalse(buffer.format.isInterleaved)
+            XCTAssertNil(buffer.floatChannelData)
+            guard let pointers = buffer.int16ChannelData else {
+                XCTFail("Int16 output must expose int16ChannelData")
+                continue
+            }
+            if channels.isEmpty {
+                channels = Array(repeating: [], count: Int(buffer.format.channelCount))
+            }
+            for channel in channels.indices {
+                channels[channel].append(contentsOf: UnsafeBufferPointer(
+                    start: pointers[channel], count: Int(buffer.frameLength)
+                ))
+            }
+        }
+    }
+
+    func decodeInt16(_ data: Data, pattern: [Int]) throws -> [[Int16]] {
+        let decoder = MP3StreamDecoder(outputCommonFormat: .pcmFormatInt16)
+        var offset = 0
+        var index = 0
+        var result: [[Int16]] = []
+        while offset < data.count {
+            let count = min(pattern[index % pattern.count], data.count - offset)
+            collectInt16(try decoder.append(data.subdata(in: offset..<(offset + count))), into: &result)
+            offset += count
+            index += 1
+        }
+        collectInt16(try decoder.finish(), into: &result)
+        return result
+    }
+
+    func testInt16OutputAndByteBoundaries() throws {
+        let defaultDecoder = MP3StreamDecoder()
+        XCTAssertEqual(defaultDecoder.outputCommonFormat, .pcmFormatFloat32)
+        XCTAssertEqual(
+            MP3StreamDecoder(outputCommonFormat: .pcmFormatFloat32).outputCommonFormat,
+            .pcmFormatFloat32
+        )
+        let data = try fixture("mono-16k-32k")
+        let expected = try decodeInt16(data, pattern: [data.count])
+        XCTAssertEqual(expected.count, 1)
+        XCTAssertEqual(expected[0].count, data.count / 144 * 576)
+        XCTAssertGreaterThan(expected[0].map { abs(Int($0)) }.max() ?? 0, 100)
+        for pattern in [[288], [1], [143, 1, 145], [1, 2, 3, 5, 7, 13, 287, 1_024]] {
+            XCTAssertEqual(try decodeInt16(data, pattern: pattern), expected, "Pattern: \(pattern)")
+        }
+    }
+
+    func testInt16MatchesSystemFileDecoder() throws {
+        for name in ["mono-16k-32k", "stereo-44k-128k", "mono-8k-16k", "stereo-vbr"] {
+            let url = try XCTUnwrap(Bundle.module.url(
+                forResource: name, withExtension: "mp3", subdirectory: "Fixtures"
+            ))
+            let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatInt16, interleaved: false)
+            var expected: [[Int16]] = []
+            while file.framePosition < file.length {
+                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4_096))
+                let remaining = AVAudioFrameCount(min(4_096, file.length - file.framePosition))
+                try file.read(into: buffer, frameCount: remaining)
+                if buffer.frameLength == 0 { break }
+                collectInt16([buffer], into: &expected)
+            }
+            let data = try Data(contentsOf: url)
+            let actual = try decodeInt16(data, pattern: [288, 7, 401])
+            XCTAssertEqual(actual.count, expected.count, name)
+            for channel in 0..<min(actual.count, expected.count) {
+                XCTAssertEqual(actual[channel].count, expected[channel].count, name)
+                let maximumError = zip(actual[channel], expected[channel]).map {
+                    abs(Int($0) - Int($1))
+                }.max() ?? 0
+                XCTAssertLessThanOrEqual(maximumError, 1, "System Int16 reference mismatch: \(name)")
+            }
+            XCTAssertEqual(try decodeInt16(data, pattern: [data.count]), actual, name)
+        }
+    }
+
+    func testInt16ResetAndBufferLifetime() throws {
+        let data = try fixture("mono-16k-32k")
+        let decoder = MP3StreamDecoder(outputCommonFormat: .pcmFormatInt16)
+        XCTAssertNil(decoder.outputFormat)
+        let first = try decoder.append(data.prefix(288))
+        XCTAssertEqual(decoder.outputFormat?.commonFormat, .pcmFormatInt16)
+        XCTAssertEqual(decoder.outputFormat?.sampleRate, 16_000)
+        var snapshot: [[Int16]] = []
+        collectInt16(first, into: &snapshot)
+        XCTAssertFalse(snapshot.isEmpty)
+        _ = try decoder.append(data.dropFirst(288))
+        _ = try decoder.finish()
+        var after: [[Int16]] = []
+        collectInt16(first, into: &after)
+        XCTAssertEqual(after, snapshot)
+        decoder.reset()
+        XCTAssertNil(decoder.outputFormat)
+        XCTAssertEqual(decoder.outputCommonFormat, .pcmFormatInt16)
+        var restarted: [[Int16]] = []
+        collectInt16(try decoder.append(data.prefix(288)), into: &restarted)
+        XCTAssertEqual(restarted, snapshot)
+    }
+
     func testProvidedHeader() throws {
         let header = try MP3FrameHeader(data: Data([0xFF, 0xF3, 0x48, 0xC4]))
         XCTAssertEqual(header.version, .mpeg2)

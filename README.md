@@ -5,7 +5,7 @@
 ## 输入与输出
 
 - 输入：按原始顺序到达的 MPEG Layer III 帧字节，保留每帧的 4 字节 MP3 头。
-- 输出：`[AVAudioPCMBuffer]`，Float32、非交错，采样率和声道数从帧头获取。
+- 输出：`[AVAudioPCMBuffer]`，可通过构造函数选择 Int16 或 Float32；两者均为非交错，采样率和声道数从帧头获取。默认 Float32。
 - 支持 MPEG-1 / MPEG-2 / MPEG-2.5，包含 padding 和可变码率；不支持 free-format MP3。
 - 支持一次 288 字节、一个字节或其他分包方式；不完整帧自动留到下次调用。
 - 持续复用一个 `AudioConverter`，保留 MP3 bit reservoir 等跨帧状态。
@@ -40,8 +40,8 @@ import AVFAudio
 import Foundation
 import MP3StreamDecoderKit
 
-// 为同一个连续音频流保留同一个实例。
-let decoder = MP3StreamDecoder()
+// 为同一个连续音频流保留同一个实例；省略参数同样使用 Float32。
+let decoder = MP3StreamDecoder(outputCommonFormat: .pcmFormatFloat32)
 
 // 每次收到 BLE 音频负载时调用；payload 可以是 288 字节或任意长度。
 let buffers = try decoder.append(payload)
@@ -67,6 +67,33 @@ decoder.reset()
 
 以上为调用片段，`payload` 由 BLE 接收方提供。完整的 WAV 写入示例在 `Examples/MP3ToWAVExample.swift`。
 
+## 选择 Int16 或 Float32
+
+```swift
+let int16Decoder = MP3StreamDecoder(outputCommonFormat: .pcmFormatInt16)
+let floatDecoder = MP3StreamDecoder(outputCommonFormat: .pcmFormatFloat32)
+let defaultDecoder = MP3StreamDecoder() // 同样输出 Float32，兼容原有调用。
+```
+
+Int16 使用 `int16ChannelData`：
+
+```swift
+for buffer in try int16Decoder.append(payload) {
+    if let samples = buffer.int16ChannelData?[0] {
+        let count = Int(buffer.frameLength)
+        let pcmSamples: [Int16] = Array(UnsafeBufferPointer(start: samples, count: count))
+        // pcmSamples 是第一个声道的有符号 16 位 PCM 采样；复制后可独立保存。
+        _ = pcmSamples
+    }
+}
+```
+
+Float32 使用 `floatChannelData`，如前面的集成示例。两种数据类型通过转换器的目标格式直接产生，不通过指针类型转换来实现。通道索引 `[0]` 代表第一个声道；非交错立体声应分别处理 `[0]` 和 `[1]`。
+
+`outputCommonFormat` 为实例创建时确定的只读属性，`reset()` 后保留；`outputFormat` 是解析首个完整帧后才确定的完整 `AVAudioFormat`，包含实际采样率、声道数和所选采样类型。需要切换类型时创建新的解码器实例。构造函数仅支持 `.pcmFormatInt16` 和 `.pcmFormatFloat32`，传入其他类型会触发前置条件失败。
+
+WAV 示例也接受 `outputCommonFormat` 参数，文件写入器的处理格式会匹配实际 PCM buffer，避免 Int16 buffer 与 Float32 写入格式不一致；最终 WAV 文件仍使用 16 位 PCM。
+
 ## 生命周期与错误
 
 所有方法和属性都应从同一个串行执行上下文访问。此类型没有声明 `Sendable`；Swift 6 中可以让一个 actor 或 `@MainActor` 对象独占该实例，避免跨执行上下文共享可变解码状态。
@@ -89,7 +116,7 @@ swift test
 
 测试素材由 FFmpeg/libmp3lame 生成，包含与所提供帧头一致的 16 kHz / 32 kbps / mono MP3，以及 MPEG-1 stereo、MPEG-2.5 和 VBR。
 
-测试覆盖帧参数解析、真实跨帧 reservoir、288 字节 / 单字节 / 不规则分包的一致性、实时输出、输出内存生命周期、残帧补齐、重置和格式改变。另将流式输出与系统完整文件解码结果进行比较。
+测试覆盖帧参数解析、真实跨帧 reservoir、288 字节 / 单字节 / 不规则分包的一致性、实时输出、输出内存生命周期、残帧补齐、重置和格式改变。Int16 与 Float32 分别和系统完整文件解码进行比较，并验证 Int16 的数据指针及重置后保留输出类型。
 
 系统 AudioConverter 的运行测试需要允许访问系统音频编解码服务。受限的工具沙箱可能使系统自带的 `afconvert` 同样返回 `fmt?`，这种环境无法完成运行时解码验证。
 
