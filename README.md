@@ -1,6 +1,6 @@
 # MP3StreamDecoderKit
 
-独立的 Swift 6 音频流解码包，最低支持 iOS 16 / macOS 13，不依赖当前杰理项目或第三方解码库。
+独立的 Swift 6 音频流解码包，最低支持 iOS 15.1 / macOS 13，不依赖当前杰理项目或第三方解码库。
 
 ## 输入与输出
 
@@ -32,6 +32,8 @@ MPEG-2 Layer III 的压缩帧长度为 `floor(72 × bitRate / sampleRate) + padd
 ## 集成
 
 将本目录作为本地 Swift Package 添加到 Xcode，并给 App target 添加 `MP3StreamDecoderKit` 产品；也可以把 `Sources/MP3StreamDecoderKit/` 下全部 Swift 文件加入 App target。
+
+`Package.swift` 通过 `.iOS("15.1")` 声明最低系统版本。App target 的 iOS Deployment Target 可设置为 `15.1`；Swift 工具版本和语言模式仍为 Swift 6，无需降低。解码源码使用的系统 API 无需为 iOS 15.1 增加替代实现。
 
 ```swift
 import AVFAudio
